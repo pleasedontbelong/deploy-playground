@@ -1,0 +1,163 @@
+#!/usr/bin/env python
+
+import sys
+from os.path import dirname, join, realpath
+
+import getopt
+import subprocess
+
+ROOT = realpath(join(dirname(__file__), '..'))
+sys.path += (ROOT,)
+INIT_TEMPLATE = 'botify_saas/__init__.template'
+INIT_FILE = 'botify_saas/__init__.py'
+CHANGELOG_FILE = 'changelog.md'
+MAIN_BRANCH = 'master'
+
+from botify_saas import VERSION
+
+
+def fail(message):
+    """
+    :param message: message to print
+    :type message: string
+    prints a message and exits
+    """
+    print message
+    sys.exit(2)
+
+
+def execute(command, ignore=False):
+    """
+    :param command: command to execute
+    :type command: string
+    :param ignore: if error should be ignored
+    :type ignore: bool
+    Executes a command and returns the output
+    """
+
+    pr = subprocess.Popen(
+        command,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE)
+
+    (out, error) = pr.communicate()
+    if error and not ignore:
+        fail("Error: executing '{}', {}".format(command, error))
+    return out
+
+
+def version_to_str(version_tuple):
+    """
+    :param version_tuple: tuple representing the versions
+    :type version_tuple: tuple
+    :return : version as string
+    """
+    return ".".join((str(i) for i in version_tuple))
+
+
+def prepare_main_branch():
+    """
+    Prepares the main branch to be released
+    """
+    execute("git checkout {}".format(MAIN_BRANCH), ignore=True)
+
+    diff = execute("git diff")
+    if diff:
+        fail("Error: Can't release with uncommited changes")
+
+    diff = execute("git diff --staged")
+    if diff:
+        fail("Error: Can't release with uncommited changes")
+
+    execute("git pull origin {}".format(MAIN_BRANCH), ignore=True)
+
+
+def generate_init(version):
+    """
+    :param version: version
+    :type version: tuple
+    Generates and modifies the __init__.py file
+    """
+    template = open(INIT_TEMPLATE, 'r')
+    content = template.read().format(version=version)
+
+    init = open(INIT_FILE, 'w')
+    init.write(content)
+
+    template.close()
+    init.close()
+
+
+def generate_changelog(version_str):
+    """
+    :param version_str: version number
+    :type version_str: string
+    Stores the git logs in the changelog.md file
+    """
+    git_log_cmd = 'git log {}..HEAD --first-parent --pretty=format:"- %s [%cn]%w(80,4,4)%b"'.format(
+        version_to_str(VERSION)
+    )
+
+    changes = execute(git_log_cmd)
+    changelog = open(CHANGELOG_FILE, 'r+')
+    old = changelog.read()
+    changelog.seek(0)
+    changelog.write("\nVersion {}\n------------\n".format(version_str))
+    changelog.write(changes)
+    changelog.write("\n")
+    changelog.write(old)
+    changelog.close()
+
+
+def release_tag(version_str):
+    """
+    :param version_str: Version in string format
+    :type version_str: string
+    Commits and push the branch an tag
+    """
+    execute("git commit -a -m 'Bump version to {}'".format(version_str))
+    execute("git tag {}".format(version_str))
+    execute("git push origin {}".format(MAIN_BRANCH), ignore=True)
+    execute("git push origin {}".format(version_str), ignore=True)
+
+
+def main(argv):
+    print "Current version: {}".format(VERSION)
+    try:
+        opts, args = getopt.getopt(argv, "qv:")
+    except getopt.GetoptError:
+        fail('Error: wrong parameters')
+
+    quiet_mode = False
+
+    # check version from parameters
+    for opt, arg in opts:
+        if opt == "-q":
+            quiet_mode = True
+
+    new_version = (int(VERSION[0]), int(VERSION[1]), int(VERSION[2] + 1))
+
+    if not quiet_mode:
+        confirm = raw_input("New version to release [{}]: ".format(new_version))
+        if confirm:
+            new_version = tuple(int(i) for i in confirm.split('.'))
+
+    new_version_str = version_to_str(new_version)
+
+    print "PREPARE MAIN BRANCH"
+    prepare_main_branch()
+
+    print "GENERATE INIT FILE"
+    generate_init(new_version)
+
+    print "APPEND COMMITS TO CHANGELOG"
+    generate_changelog(new_version_str)
+
+    print "RELEASE TAG"
+    release_tag(new_version_str)
+
+    print "RELEASED", new_version_str
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

@@ -1,0 +1,12 @@
+#!/bin/bash
+
+if ! test -e botify_saas/settings/local.py; then
+  echo "copying default botify_saas/settings/local.py file:"
+  cp -nv botify_saas/settings/local.py.default botify_saas/settings/local.py
+fi
+
+echo "flake8 version:"
+flake8 --version
+
+echo "make test:"
+make test
